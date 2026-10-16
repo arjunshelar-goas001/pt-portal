@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>PT Portal</title>
+<style>
+  body { margin: 0; font-family: Arial, Helvetica, sans-serif; background: #f4f6f9; color: #1c2633; }
+  #pt-boot { max-width: 420px; margin: 18vh auto 0; padding: 0 16px; text-align: center; }
+  #pt-boot .bar { height: 4px; background: #dde3ea; border-radius: 2px; overflow: hidden; margin-top: 16px; }
+  #pt-boot .bar i { display: block; height: 100%; width: 35%; background: #1f5fa8; animation: pt-move 1.2s ease-in-out infinite; }
+  @keyframes pt-move { 0% { margin-left: -35%; } 100% { margin-left: 100%; } }
+  #pt-boot button { margin-top: 16px; padding: 9px 18px; border-radius: 6px; border: 1px solid #1f5fa8; background: #1f5fa8; color: #fff; font-weight: bold; cursor: pointer; }
+  @media (prefers-reduced-motion: reduce) { #pt-boot .bar i { animation: none; width: 100%; } }
+</style>
+</head>
+<body>
+<div id="pt-boot"><b>PT Workflow Portal</b><div id="pt-msg" style="color:#5d6877;margin-top:6px">Loading…</div><div class="bar"><i></i></div></div>
+<script>
+/*
+ * PT Portal launcher.
+ * This page lives outside Google (e.g. GitHub Pages). It loads the portal's screens from the
+ * Apps Script web app and talks to it WITHOUT sending any Google login (credentials: 'omit'),
+ * so Google never switches accounts and the "/u/1/ — unable to open the file" error cannot occur.
+ * Sign-in is the portal's own email-code sign-in. No data is stored in this page.
+ *
+ * Only the line below changes if the web app URL ever changes (Deploy › Manage deployments › URL).
+ */
+var PT_ENDPOINT = 'https://script.google.com/macros/s/AKfycbz3ZikWVAS7mKtx-h2lj1Pi8emceMX9GIgu2sAe39gOIyKQCE2Vmq6Z7tuWtCEQd2wE/exec';
+
+(function () {
+  'use strict';
+  window.PT_POST = function (fn, args) {
+    return fetch(PT_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },   // "simple" request: no CORS pre-check needed
+      body: JSON.stringify({ fn: fn, args: args || [] }),
+      credentials: 'omit',                                      // never send Google cookies
+      redirect: 'follow',
+      cache: 'no-store'
+    }).then(function (r) {
+      if (!r.ok) throw new Error('The portal server answered ' + r.status + '. Please try again.');
+      return r.text();
+    }).then(function (t) {
+      try { return JSON.parse(t); }
+      catch (e) { throw new Error('The portal could not be reached. Check that the web app is deployed for "Anyone".'); }
+    });
+  };
+
+  function show(msg, retry) {
+    document.getElementById('pt-msg').textContent = msg;
+    var bar = document.querySelector('#pt-boot .bar'); if (bar) bar.style.display = retry ? 'none' : '';
+    if (retry && !document.getElementById('pt-retry')) {
+      var b = document.createElement('button'); b.id = 'pt-retry'; b.textContent = 'Try again';
+      b.onclick = function () { b.remove(); start(); };
+      document.getElementById('pt-boot').appendChild(b);
+    }
+  }
+
+  // Speed: the screens are kept in this browser and shown at once on the next visit; a fresh
+  // copy is fetched in the background and, if the portal was updated, the page reloads once.
+  var SHELL_KEY = 'ptp_shell';
+  function readCache() { try { var t = localStorage.getItem(SHELL_KEY); return t ? JSON.parse(t) : null; } catch (e) { return null; } }
+  function writeCache(d) { try { localStorage.setItem(SHELL_KEY, JSON.stringify(d)); } catch (e) { /* storage full or blocked */ } }
+  function sig(d) { return [d.version, d.loginMode, d.styles.length, d.body.length, d.client.length, d.client.slice(-200)].join('|'); }
+
+  function mount(d) {
+    var q = new URLSearchParams(location.search);
+    window.INITIAL_ROUTE = { page: String(q.get('page') || 'home').replace(/[^a-z]/gi, ''), id: String(q.get('id') || '').replace(/[^A-Za-z0-9\-]/g, '') };
+    window.LOGIN_MODE = d.loginMode;
+    document.title = d.title;
+    document.head.insertAdjacentHTML('beforeend', d.styles);
+    document.body.innerHTML = d.body;
+    var m = /<script>([\s\S]*)<\/script>/.exec(d.client);
+    var s = document.createElement('script');
+    s.text = m ? m[1] : d.client;
+    document.body.appendChild(s);
+  }
+
+  function fetchShell() {
+    return window.PT_POST('api_shell', []).then(function (r) {
+      if (!r || !r.ok) throw new Error((r && r.error) || 'The portal did not answer.');
+      return r.data;
+    });
+  }
+
+  function start() {
+    var cached = readCache();
+    if (cached && cached.client) {
+      mount(cached);
+      fetchShell().then(function (d) {
+        if (sig(d) !== sig(cached)) { writeCache(d); location.reload(); }   // portal updated: use the new screens
+      }).catch(function () { /* offline or slow: keep the cached screens */ });
+      return;
+    }
+    show('Loading…');
+    fetchShell().then(function (d) { writeCache(d); mount(d); }).catch(function (e) {
+      show((e && e.message ? e.message : 'The portal could not be reached.') + ' Check your internet connection and try again.', true);
+    });
+  }
+  start();
+})();
+</script>
+</body>
+</html>
